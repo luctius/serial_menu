@@ -1,0 +1,27 @@
+[package]
+authors = ["Cor <prive@corpeters.nl>"]
+edition = "2018"
+name = "serial_menu"
+version = "0.1.0"
+
+[dependencies]
+embedded-hal = "*"
+heapless = "*"
+nb = "*"
+
+#[dependencies.trivial-colours-rs]
+#git = "git@github.com:luctius/trivial-colours-rs.git"
+#branch = "no_std"
+#default-features = "false"
+#features = ["no_std"]
+
+[dependencies.arraydeque]
+version = "0.4"
+default-features = false
+
+[dev-dependencies]
+embedded-hal-mock = "*"
+pancurses = "*"
+
+[[example]]
+name = "simple"

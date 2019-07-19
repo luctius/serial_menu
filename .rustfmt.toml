@@ -1,0 +1,16 @@
+unstable_features = true
+indent_style = "Visual"
+use_small_heuristics = "Max"
+fn_args_density = "Compressed"
+brace_style = "PreferSameLine"
+merge_imports = true
+match_block_trailing_comma = true
+max_width = 120
+normalize_comments = true
+reorder_impl_items = true
+trailing_comma = "always"
+match_arm_blocks = false
+condense_wildcard_suffixes = true
+struct_field_align_threshold = 10
+imports_layout = "HorizontalVertical"
+control_brace_style = "ClosingNextLine"
