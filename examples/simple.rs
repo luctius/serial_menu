@@ -34,7 +34,7 @@ static UINT_VAL_WRITE: MenuItem<'_, Context> = MenuItem {
         let _ = write!(buf, "{}", ctx.uint_value);
     },
     |buf, ctx| {
-        let i: u32 = buf.parse()?;
+        let i = buf.parse()?;
         ctx.uint_value = i;
         Ok( () )
     }),
@@ -79,6 +79,7 @@ impl<'a> embedded_hal::serial::Write<u8> for SerialMock {
             b'\n' => { self.window.addch('\n'); },
             b' ' => { self.window.addch(' '); },
             b':' => { self.window.addch(':'); },
+            b'=' => { self.window.addch('='); },
             b'-' => { self.window.addch('-'); },
             b'_' => { self.window.addch('_'); },
             b'[' => { self.window.addch('['); },
@@ -174,13 +175,8 @@ fn main() {
     let mut serial = SerialMock { window };
 
         match runner.run(&mut context, &mut serial) {
-            Ok(_) => (),
-            Err(Error::InvalidInput) => {},
-            Err(Error::Hardware(e)) => {
-                match e {
-                    nb::Error::WouldBlock => {},
-                    nb::Error::Other(_) => { panic!("Hardware error: {:?}", e); },
-                }
-            },
+            Ok(_) => {},
+            Err(nb::Error::WouldBlock) => {},
+            Err(nb::Error::Other(e) ) => { panic!("Hardware error: {:?}", e); },
         }
 }

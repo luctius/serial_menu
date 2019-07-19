@@ -1,6 +1,6 @@
 //! Embedded Menu System
 
-#![no_std]
+//#![no_std]
 
 #![deny(
     nonstandard_style,
@@ -44,20 +44,6 @@ const BACKSPACE: char = '\x08';
 const NEWLINE: char = '\n';
 const CARRIAGE_RETURN: char = '\r';
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error<E> {
-    InvalidInput,
-    Hardware(nb::Error<E>),
-
-    #[cfg(test)]
-    MenuExit, // Used by the tests to end looping
-}
-impl<E> From<nb::Error<E>> for Error<E> {
-    fn from(error: nb::Error<E>) -> Self {
-        Error::Hardware(error)
-    }
-}
-
 pub enum CallbackError {
     ParseError,
 }
@@ -87,18 +73,18 @@ type ReadCallbackFn<C> = fn(buf: &mut dyn core::fmt::Write, context: &C);
 type WriteCallbackFn<C> = fn(arg: &String<U32>, context: &mut C) -> Result<(), CallbackError>;
 
 #[allow(dead_code)]
-pub enum MenuItemType<'a, T> {
-    SubMenu(&'a [&'a MenuItem<'a, T>]),
-    ReadValue(ReadCallbackFn<T>),
-    WriteValue(ReadCallbackFn<T>, WriteCallbackFn<T>),
-    ExecValue(ExecCallbackFn<T>),
+pub enum MenuItemType<'a, C> {
+    SubMenu(&'a [&'a MenuItem<'a, C>]),
+    ReadValue(ReadCallbackFn<C>),
+    WriteValue(ReadCallbackFn<C>, WriteCallbackFn<C>),
+    ExecValue(ExecCallbackFn<C>),
 }
 
-pub struct MenuItem<'a, T> {
+pub struct MenuItem<'a, C> {
     pub name: &'a str,
     pub hint: Option<&'a str>,
-    pub parent: Option<&'a MenuItem<'a, T>>,
-    pub menu_type: MenuItemType<'a, T>,
+    pub parent: Option<&'a MenuItem<'a, C>>,
+    pub menu_type: MenuItemType<'a, C>,
 }
 
 #[allow(dead_code)]
@@ -134,7 +120,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
         self
     }
 
-    fn get_input<S, E>(&mut self, serial: &mut S) -> Result<(), Error<E>>
+    fn get_input<S, E>(&mut self, serial: &mut S) -> Result<(), nb::Error<E> >
     where
         S: HalRead<u8, Error = E> + HalWrite<u8, Error = E>,
     {
@@ -159,7 +145,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
                         } else {
                             if c == 'x' {
                                 #[cfg(test)]
-                                return Err(Error::MenuExit);
+                                return Err(nb::Error::WouldBlock);
                             }
                             continue;
                         }
@@ -180,14 +166,14 @@ impl<'a, Context> Dispatcher<'a, Context> {
                     MenuState::Processing => {}
                 }
             } else if let Err(e) = err {
-                return Err(Error::Hardware(e));
+                return Err(e);
             }
         }
 
         Ok(())
     }
 
-    fn display_value<S, E>(&self, ctx: &Context, menu: &MenuItem<'a, Context>, tx: &mut S) -> Result<(), Error<E>>
+    fn display_value<S, E>(&self, ctx: &Context, menu: &MenuItem<'a, Context>, tx: &mut S) -> Result<(), nb::Error<E> >
     where
         S: HalWrite<u8, Error = E>,
     {
@@ -208,7 +194,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
         }
     }
 
-    fn display_menu<S, E>(&self, ctx: &mut Context, tx: &mut S) -> Result<(), Error<E>>
+    fn display_menu<S, E>(&self, ctx: &mut Context, tx: &mut S) -> Result<(), nb::Error<E> >
     where
         S: HalWrite<u8, Error = E>,
     {
@@ -216,15 +202,15 @@ impl<'a, Context> Dispatcher<'a, Context> {
 
         if let MenuItemType::SubMenu(children) = self.current_item.menu_type {
             if let Some(parent) = self.current_item.parent {
-                sprintln!(tx, " <0> -  {}", parent.name)?;
+                sprintln!(tx, " <0> --> {}", parent.name)?;
             }
 
             for (i, c) in children.iter().enumerate() {
                 match c.menu_type {
-                    MenuItemType::SubMenu(..)    => { sprint!(tx, " [{}] -  {}", i+1, c.name)?; },
-                    MenuItemType::ReadValue(..)  => { sprint!(tx, " [{}] -> {}", i+1, c.name)?; },
-                    MenuItemType::WriteValue(..) => { sprint!(tx, " {{{}}} -> {}", i+1, c.name)?; },
-                    MenuItemType::ExecValue(..)  => { sprint!(tx, " [{}] >> {}", i+1, c.name)?; },
+                    MenuItemType::SubMenu(..)    => { sprint!(tx, " [{}] --> {}", i+1, c.name)?; },
+                    MenuItemType::ReadValue(..)  => { sprint!(tx, " [{}] r=> {}", i+1, c.name)?; },
+                    MenuItemType::WriteValue(..) => { sprint!(tx, " [{}] w=> {}", i+1, c.name)?; },
+                    MenuItemType::ExecValue(..)  => { sprint!(tx, " [{}] e=> {}", i+1, c.name)?; },
                 }
 
                 self.display_value(ctx, c, tx)?;
@@ -236,7 +222,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
         Ok(())
     }
 
-    pub fn run<S, E>(&mut self, ctx: &mut Context, serial: &mut S) -> Result<(), Error<E>>
+    pub fn run<S, E>(&mut self, ctx: &mut Context, serial: &mut S) -> Result<(), nb::Error<E> >
     where
         S: HalRead<u8, Error = E> + HalWrite<u8, Error = E>,
     {
@@ -269,7 +255,6 @@ impl<'a, Context> Dispatcher<'a, Context> {
                         Ok(())
                     } else {
                         let _ = self.buffer.pop_front();
-                        sprintln!(serial, "Invalid Item: {}", current_idx)?;
                         Ok( () )
                     }
                 } else if let MenuItemType::SubMenu(menu) = self.current_item.menu_type {
@@ -309,17 +294,28 @@ impl<'a, Context> Dispatcher<'a, Context> {
                     }
                 } else if let MenuItemType::WriteValue(_rcb, wcb) = self.current_item.menu_type {
                     let mut buffer = String::<U32>::new();
-                    while let Some(c) = self.buffer.pop_front() {
-                        //TODO length check
-                        buffer.push(c).expect("Unable to push into string?!?");
+
+                    /* Set menu state after writing */
+                    self.state = MenuState::NeedIdx;
+                    self.current_item = self.current_item.parent.expect("Item has no parent?");
+                    changed = true;
+
+                    for i in 0..buffer.capacity() {
+                        if let Some(c) = self.buffer.pop_front() {
+                            if i < buffer.capacity() {
+                                buffer.push(c).expect("cannot push into buffer?!?");
+                            }
+                        }
+                        else { break; }
                     }
+
+                    /* Clean input buffer if some joker put a lot in it. */
+                    while let Some(_) = self.buffer.pop_front() {}
+
                     if wcb(&buffer, ctx).is_err() {
                         sprintln!(serial, "Unable to parse {}", buffer)?;
                     }
 
-                    self.state = MenuState::NeedIdx;
-                    self.current_item = self.current_item.parent.expect("Item has not parent?");
-                    changed = true;
                     Ok( () )
                 } else {
                     unimplemented!();
@@ -399,9 +395,9 @@ mod tests {
             // Printing Main Menu
             SerialTransaction::write_many(&format!("{}\r\n", MAIN_MENU.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [1] -  {}\r\n", SUB1.name)),
+            SerialTransaction::write_many(&format!(" [1] --> {}\r\n", SUB1.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [2] -  {}\r\n", SUB2.name)),
+            SerialTransaction::write_many(&format!(" [2] --> {}\r\n", SUB2.name)),
             SerialTransaction::flush(),
             SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
@@ -410,9 +406,9 @@ mod tests {
             SerialTransaction::read(b'1'),
             SerialTransaction::write_many(&format!("{}\r\n", SUB1.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" <0> -  {}\r\n", MAIN_MENU.name)),
+            SerialTransaction::write_many(&format!(" <0> -->  {}\r\n", MAIN_MENU.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [1] -> {}: {} ({})\r\n", BOOL_VAL.name, context.bool_value, BOOL_VAL.hint.unwrap() )),
+            SerialTransaction::write_many(&format!(" [1] r=> {}: {} ({})\r\n", BOOL_VAL.name, context.bool_value, BOOL_VAL.hint.unwrap() )),
             SerialTransaction::flush(),
             SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
@@ -421,9 +417,9 @@ mod tests {
             SerialTransaction::read(b'0'),
             SerialTransaction::write_many(&format!("{}\r\n", MAIN_MENU.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [1] -  {}\r\n", SUB1.name)),
+            SerialTransaction::write_many(&format!(" [1] --> {}\r\n", SUB1.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [2] -  {}\r\n", SUB2.name)),
+            SerialTransaction::write_many(&format!(" [2] --> {}\r\n", SUB2.name)),
             SerialTransaction::flush(),
             SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
@@ -432,11 +428,11 @@ mod tests {
             SerialTransaction::read(b'2'),
             SerialTransaction::write_many(&format!("{}\r\n", SUB2.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" <0> -  {}\r\n", MAIN_MENU.name)),
+            SerialTransaction::write_many(&format!(" <0> --> {}\r\n", MAIN_MENU.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [1] -> {}: {}\r\n", UINT_VAL.name, context.uint_value)),
+            SerialTransaction::write_many(&format!(" [1] r=> {}: {}\r\n", UINT_VAL.name, context.uint_value)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" {{2}} -> {}: {}\r\n", UINT_VAL_WRITE.name, context.uint_value)),
+            SerialTransaction::write_many(&format!(" [2] w=> {}: {}\r\n", UINT_VAL_WRITE.name, context.uint_value)),
             SerialTransaction::flush(),
             SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
@@ -452,9 +448,9 @@ mod tests {
             SerialTransaction::read(b'\x08'),
             SerialTransaction::write_many(&format!("{}\r\n", MAIN_MENU.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [1] -  {}\r\n", SUB1.name)),
+            SerialTransaction::write_many(&format!(" [1] --> {}\r\n", SUB1.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [2] -  {}\r\n", SUB2.name)),
+            SerialTransaction::write_many(&format!(" [2] --> {}\r\n", SUB2.name)),
             SerialTransaction::flush(),
             SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
@@ -468,7 +464,7 @@ mod tests {
         match runner.run(&mut context, &mut serial) {
             Ok(_) => {}
             Err(e1) => {
-                if e1 != Error::MenuExit {
+                if e1 != nb::Error::WouldBlock {
                     panic!("Error: {:?}", e1);
                 }
             }
@@ -486,9 +482,9 @@ mod tests {
             // Printing Main Menu
             SerialTransaction::write_many(&format!("{}\r\n", MAIN_MENU.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [1] -  {}\r\n", SUB1.name)),
+            SerialTransaction::write_many(&format!(" [1] --> {}\r\n", SUB1.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [2] -  {}\r\n", SUB2.name)),
+            SerialTransaction::write_many(&format!(" [2] --> {}\r\n", SUB2.name)),
             SerialTransaction::flush(),
             SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
@@ -497,11 +493,11 @@ mod tests {
             SerialTransaction::read(b'2'),
             SerialTransaction::write_many(&format!("{}\r\n", SUB2.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" <0> -  {}\r\n", MAIN_MENU.name)),
+            SerialTransaction::write_many(&format!(" <0> --> {}\r\n", MAIN_MENU.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [1] -> {}: {}\r\n", UINT_VAL.name, context.uint_value)),
+            SerialTransaction::write_many(&format!(" [1] r=> {}: {}\r\n", UINT_VAL.name, context.uint_value)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" {{2}} -> {}: {}\r\n", UINT_VAL_WRITE.name, context.uint_value)),
+            SerialTransaction::write_many(&format!(" [2] w=> {}: {}\r\n", UINT_VAL_WRITE.name, context.uint_value)),
             SerialTransaction::flush(),
             SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
@@ -531,11 +527,11 @@ mod tests {
             // Printing Sub Menu 2
             SerialTransaction::write_many(&format!("{}\r\n", SUB2.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" <0> -  {}\r\n", MAIN_MENU.name)),
+            SerialTransaction::write_many(&format!(" <0> --> {}\r\n", MAIN_MENU.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [1] -> {}: {}\r\n", UINT_VAL.name, 25)),
+            SerialTransaction::write_many(&format!(" [1] r=> {}: {}\r\n", UINT_VAL.name, 25)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" {{2}} -> {}: {}\r\n", UINT_VAL_WRITE.name, 25)),
+            SerialTransaction::write_many(&format!(" [2] w=> {}: {}\r\n", UINT_VAL_WRITE.name, 25)),
             SerialTransaction::flush(),
             SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
@@ -549,7 +545,7 @@ mod tests {
         match runner.run(&mut context, &mut serial) {
             Ok(_) => {}
             Err(e1) => {
-                if e1 != Error::MenuExit {
+                if e1 != nb::Error::WouldBlock {
                     panic!("Error: {:?}", e1);
                 }
             }

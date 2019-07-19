@@ -14,21 +14,15 @@ macro_rules! sprint {
             }
 
             for b in output.as_bytes() {
-                let err = $stdout.write(*b);
-                if let Err(e) = err {
-                    return Err(Error::Hardware(e) );
-                }
+                $stdout.write(*b)?;
                 if *b == b'\n' {
-                    let err = $stdout.flush();
-                    if let Err(e) = err {
-                        return Err(Error::Hardware(e) );
-                    }
+                    $stdout.flush()?;
                 }
             }
             Ok( () )
         }
         else {
-            Err(Error::InvalidInput)
+            Err(nb::Error::WouldBlock)
         }
     })
 }
