@@ -4,31 +4,36 @@
 
 use serial_menu::*;
 
-use pancurses::{initscr, endwin};
+use pancurses::initscr;
 
 struct Context {
-    bool_value: bool,
     uint_value: u32,
+    pwm: bool,
 }
+static MAIN_MENU: MenuItem<'_, Context> = MenuItem {
+    name: "Main",
+    hint: None,
+    parent: None,
+    menu_type: MenuItemType::SubMenu(&[&SUB1, &SUB2])
+};
 
-mitem!(Main,
-       MAIN_MENU = "Main Menu",
-       [&SUB1, &SUB2]
-);
+static BOOL_VAL: MenuItem<'_, Context> = MenuItem {
+    name: "PWM Read",
+    hint: Some("boolean"),
+    parent: None,
+    menu_type: MenuItemType::ReadValue(|buf, ctx| { let _ = write!(buf, "{}", ctx.pwm); } ),
+};
 
-mitem!(Read (&SUB1),
-       BOOL_VAL = "bool", ("boolean")
-       r=> |buf, ctx| { let _ = write!(buf, "{}", ctx.bool_value); }
-);
-
-mitem!(Read (&SUB2),
-       UINT_VAL = "Uint",
-       r=> |buf, ctx| { let _ = write!(buf, "{}", ctx.uint_value); }
-);
+static UINT_VAL: MenuItem<'_, Context> = MenuItem {
+    name: "Uint",
+    hint: None,
+    parent: None,
+    menu_type: MenuItemType::ReadValue(|buf, ctx| { let _ = write!(buf, "{}", ctx.uint_value); } ),
+};
 
 static UINT_VAL_WRITE: MenuItem<'_, Context> = MenuItem {
     name: "Uint_Write",
-    hint: None,
+    hint: Some("u32"),
     parent: Some(&SUB2),
     menu_type: MenuItemType::WriteValue(|buf, ctx| {
         let _ = write!(buf, "{}", ctx.uint_value);
@@ -40,11 +45,22 @@ static UINT_VAL_WRITE: MenuItem<'_, Context> = MenuItem {
     }),
 };
 
+static PWM_TEST: MenuItem<'_, Context> = MenuItem {
+    name: "PWM Test",
+    hint: None,
+    parent: Some(&SUB1),
+    menu_type: MenuItemType::ExecValue(|buf, ctx| {
+        let _ = write!(buf, "{}", match ctx.pwm { false => "off", true => "on", } );
+    },
+    |ctx| ctx.pwm = !ctx.pwm
+    ),
+};
+
 static SUB1: MenuItem<'_, Context> = MenuItem {
     name: "Sub Menu 1",
     hint: None,
     parent: Some(&MAIN_MENU),
-    menu_type: MenuItemType::SubMenu(&[&BOOL_VAL])
+    menu_type: MenuItemType::SubMenu(&[&BOOL_VAL, &PWM_TEST])
 };
 
 static SUB2: MenuItem<'_, Context> = MenuItem {
@@ -161,7 +177,7 @@ impl<'a> embedded_hal::serial::Write<u8> for SerialMock {
 }
 
 fn main() {
-    let mut context = Context { bool_value: true, uint_value: 32 };
+    let mut context = Context { uint_value: 32, pwm: false, };
 
     let mut runner = Dispatcher::new(&MAIN_MENU).with_refresh();
 

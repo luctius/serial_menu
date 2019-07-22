@@ -1,6 +1,6 @@
 //! Embedded Menu System
 
-//#![no_std]
+#![no_std]
 
 #![deny(
     nonstandard_style,
@@ -34,15 +34,23 @@
 #[cfg(test)]
 #[macro_use] extern crate alloc;
 
+use core::fmt::Write;
 use arraydeque::{behavior::Wrapping, ArrayDeque};
 use embedded_hal::serial::{Read as HalRead, Write as HalWrite};
-use heapless::{consts::U32, String};
+use heapless::{
+    consts::{
+        U32, U100
+    },
+    String
+};
 
 mod macros;
 
 const BACKSPACE: char = '\x08';
 const NEWLINE: char = '\n';
 const CARRIAGE_RETURN: char = '\r';
+
+type Word = u8;
 
 pub enum CallbackError {
     ParseError,
@@ -69,7 +77,7 @@ impl From<core::char::ParseCharError> for CallbackError {
 }
 
 type ExecCallbackFn<C> = fn(context: &mut C);
-type ReadCallbackFn<C> = fn(buf: &mut dyn core::fmt::Write, context: &C);
+type ReadCallbackFn<C> = fn(buf: &mut dyn Write, context: &C);
 type WriteCallbackFn<C> = fn(arg: &String<U32>, context: &mut C) -> Result<(), CallbackError>;
 
 #[allow(dead_code)]
@@ -77,14 +85,45 @@ pub enum MenuItemType<'a, C> {
     SubMenu(&'a [&'a MenuItem<'a, C>]),
     ReadValue(ReadCallbackFn<C>),
     WriteValue(ReadCallbackFn<C>, WriteCallbackFn<C>),
-    ExecValue(ExecCallbackFn<C>),
+    ExecValue(ReadCallbackFn<C>, ExecCallbackFn<C>),
 }
 
-pub struct MenuItem<'a, C> {
+pub struct MenuItem<'a, Context> {
     pub name: &'a str,
     pub hint: Option<&'a str>,
-    pub parent: Option<&'a MenuItem<'a, C>>,
-    pub menu_type: MenuItemType<'a, C>,
+    pub parent: Option<&'a MenuItem<'a, Context>>,
+    pub menu_type: MenuItemType<'a, Context>,
+}
+impl<'a, Context> MenuItem<'a, Context> {
+    fn value_to_string(&self, ctx: &Context) -> String<U32> {
+        let mut string = String::new();
+        match self.menu_type {
+            MenuItemType::SubMenu(..) => (),
+            MenuItemType::ReadValue(ref rcb) | MenuItemType::ExecValue(ref rcb, ..) | MenuItemType::WriteValue(ref rcb, ..) => {
+                rcb(&mut string, ctx);
+            }
+        }
+
+        string
+    }
+
+    fn menu_item_to_string(&self, idx: usize, ctx: &mut Context) -> String<U100>
+    {
+        let mut string = String::new();
+
+        match self.menu_type {
+            MenuItemType::SubMenu(..)    => { let _ = write!(string, " [{}] --> {}",     idx, self.name); },
+            MenuItemType::ReadValue(..)  => { let _ = write!(string, " [{}] r=> {}: {}", idx, self.name, self.value_to_string(ctx) ); },
+            MenuItemType::WriteValue(..) => { let _ = write!(string, " [{}] w=> {}: {}", idx, self.name, self.value_to_string(ctx) ); },
+            MenuItemType::ExecValue(..)  => { let _ = write!(string, " [{}] e=> {}: {}", idx, self.name, self.value_to_string(ctx) ); },
+        }
+
+        if let Some(hint) = self.hint {
+            let _ = write!(string, " [{}]", hint);
+        }
+
+        string
+    }
 }
 
 #[allow(dead_code)]
@@ -122,7 +161,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
 
     fn get_input<S, E>(&mut self, serial: &mut S) -> Result<(), nb::Error<E> >
     where
-        S: HalRead<u8, Error = E> + HalWrite<u8, Error = E>,
+        S: HalRead<Word, Error = E> + HalWrite<Word, Error = E>
     {
         while self.state != MenuState::Processing {
             let err = serial.read();
@@ -153,7 +192,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
                     MenuState::NeedEnter => {
                         if c == BACKSPACE {
                             let _ = self.buffer.pop_back();
-                            sprint!(serial, "{} {}", BACKSPACE, BACKSPACE)?;
+                            sprint!(serial, "{bs} {bs}", bs=BACKSPACE)?;
                         } else if c == NEWLINE || c == CARRIAGE_RETURN {
                             sprintln!(serial)?;
                             sprintln!(serial)?;
@@ -173,30 +212,9 @@ impl<'a, Context> Dispatcher<'a, Context> {
         Ok(())
     }
 
-    fn display_value<S, E>(&self, ctx: &Context, menu: &MenuItem<'a, Context>, tx: &mut S) -> Result<(), nb::Error<E> >
-    where
-        S: HalWrite<u8, Error = E>,
-    {
-        match menu.menu_type {
-            MenuItemType::SubMenu(..) | MenuItemType::ExecValue(..) => (),
-            MenuItemType::ReadValue(ref cb) | MenuItemType::WriteValue(ref cb, ..) => {
-                let mut buffer = String::<U32>::new();
-                cb(&mut buffer, ctx);
-                sprint!(tx, ": {}", buffer)?;
-            }
-        }
-
-        if let Some(hint) = menu.hint {
-            sprintln!(tx, " ({})", hint)
-        }
-        else {
-            sprintln!(tx)
-        }
-    }
-
     fn display_menu<S, E>(&self, ctx: &mut Context, tx: &mut S) -> Result<(), nb::Error<E> >
     where
-        S: HalWrite<u8, Error = E>,
+        S: HalWrite<Word, Error = E>
     {
         sprintln!(tx, "{}", self.current_item.name)?;
 
@@ -206,14 +224,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
             }
 
             for (i, c) in children.iter().enumerate() {
-                match c.menu_type {
-                    MenuItemType::SubMenu(..)    => { sprint!(tx, " [{}] --> {}", i+1, c.name)?; },
-                    MenuItemType::ReadValue(..)  => { sprint!(tx, " [{}] r=> {}", i+1, c.name)?; },
-                    MenuItemType::WriteValue(..) => { sprint!(tx, " [{}] w=> {}", i+1, c.name)?; },
-                    MenuItemType::ExecValue(..)  => { sprint!(tx, " [{}] e=> {}", i+1, c.name)?; },
-                }
-
-                self.display_value(ctx, c, tx)?;
+                sprintln!(tx, "{}", c.menu_item_to_string(i+1, ctx) )?;
             }
 
             sprintln!(tx)?;
@@ -224,7 +235,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
 
     pub fn run<S, E>(&mut self, ctx: &mut Context, serial: &mut S) -> Result<(), nb::Error<E> >
     where
-        S: HalRead<u8, Error = E> + HalWrite<u8, Error = E>,
+        S: HalRead<Word, Error = E> + HalWrite<Word, Error = E>
     {
         let mut result = Ok(());
 
@@ -255,6 +266,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
                         Ok(())
                     } else {
                         let _ = self.buffer.pop_front();
+                        changed = true;
                         Ok( () )
                     }
                 } else if let MenuItemType::SubMenu(menu) = self.current_item.menu_type {
@@ -271,22 +283,25 @@ impl<'a, Context> Dispatcher<'a, Context> {
                             MenuItemType::ReadValue(rcb) => {
                                 let mut buffer = String::<U32>::new();
                                 rcb(&mut buffer, ctx);
-                                sprintln!(serial, "{}: {}", child.name, buffer)?;
-                                sprintln!(serial)
-                            }
-                            MenuItemType::ExecValue(ecb) => {
-                                ecb(ctx);
-                                Ok( () )
+                                sprintln!(serial, "{}: {}", child.name, buffer)
                             }
                             MenuItemType::WriteValue(rcb, _) => {
-                                // TODO: Input
                                 self.state = MenuState::NeedEnter;
                                 self.current_item = child;
 
                                 let mut buffer = String::<U32>::new();
                                 rcb(&mut buffer, ctx);
                                 sprintln!(serial, "{}: {}", child.name, buffer)?;
-                                sprintln!(serial, "Enter new value:")
+                                match child.hint {
+                                    None => sprintln!(serial, "Enter new value:"),
+                                    Some(h) => sprintln!(serial, "Enter new value: [{}]", h),
+                                }
+                            }
+                            MenuItemType::ExecValue(readcb, execcb) => {
+                                execcb(ctx);
+                                let mut buffer = String::<U32>::new();
+                                readcb(&mut buffer, ctx);
+                                sprintln!(serial, "{}: {}", child.name, buffer)
                             }
                         }
                     } else {
@@ -341,20 +356,26 @@ mod tests {
         uint_value: u32,
     }
 
-    mitem!(Main,
-           MAIN_MENU = "Main Menu",
-           [&SUB1, &SUB2]
-    );
+    static MAIN_MENU: MenuItem<'_, Context> = MenuItem {
+        name: "Main",
+        hint: None,
+        parent: None,
+        menu_type: MenuItemType::SubMenu(&[&SUB1, &SUB2])
+    };
 
-    mitem!(Read (&SUB1),
-           BOOL_VAL = "bool", ("boolean")
-           r=> |buf, ctx| { let _ = write!(buf, "{}", ctx.bool_value); }
-    );
+    static BOOL_VAL: MenuItem<'_, Context> = MenuItem {
+        name: "Bool",
+        hint: Some("boolean"),
+        parent: None,
+        menu_type: MenuItemType::ReadValue(|buf, ctx| { let _ = write!(buf, "{}", ctx.bool_value); } ),
+    };
 
-    mitem!(Read (&SUB2),
-           UINT_VAL = "Uint",
-           r=> |buf, ctx| { let _ = write!(buf, "{}", ctx.uint_value); }
-    );
+    static UINT_VAL: MenuItem<'_, Context> = MenuItem {
+        name: "Uint",
+        hint: None,
+        parent: None,
+        menu_type: MenuItemType::ReadValue(|buf, ctx| { let _ = write!(buf, "{}", ctx.uint_value); } ),
+    };
 
     static UINT_VAL_WRITE: MenuItem<'_, Context> = MenuItem {
         name: "Uint_Write",
@@ -406,9 +427,9 @@ mod tests {
             SerialTransaction::read(b'1'),
             SerialTransaction::write_many(&format!("{}\r\n", SUB1.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" <0> -->  {}\r\n", MAIN_MENU.name)),
+            SerialTransaction::write_many(&format!(" <0> --> {}\r\n", MAIN_MENU.name)),
             SerialTransaction::flush(),
-            SerialTransaction::write_many(&format!(" [1] r=> {}: {} ({})\r\n", BOOL_VAL.name, context.bool_value, BOOL_VAL.hint.unwrap() )),
+            SerialTransaction::write_many(&format!(" [1] r=> {}: {} [{}]\r\n", BOOL_VAL.name, context.bool_value, BOOL_VAL.hint.unwrap() )),
             SerialTransaction::flush(),
             SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
@@ -440,8 +461,6 @@ mod tests {
             // Printing Show UINT_VAL
             SerialTransaction::read(b'1'),
             SerialTransaction::write_many(&format!("{}: {}\r\n", UINT_VAL.name, context.uint_value)),
-            SerialTransaction::flush(),
-            SerialTransaction::write_many("\r\n"),
             SerialTransaction::flush(),
 
             // Printing Sub Menu 2
@@ -512,8 +531,8 @@ mod tests {
             // Input
             SerialTransaction::read(b'3'),
             SerialTransaction::write_many("3"),
-            SerialTransaction::read(b'\x08'), // backspace
-            SerialTransaction::write_many("\x08 \x08"),
+            SerialTransaction::read(BACKSPACE as u8), // backspace
+            SerialTransaction::write_many(format!("{bs} {bs}", bs=BACKSPACE) ),
             SerialTransaction::read(b'2'),
             SerialTransaction::write_many("2"),
             SerialTransaction::read(b'5'),

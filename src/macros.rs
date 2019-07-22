@@ -5,7 +5,7 @@
 #[macro_export]
 macro_rules! sprint {
     ($stdout:expr, $($arg:tt)*) => ({
-        let mut output: String<U32> = String::new();
+        let mut output: String<U100> = String::new();
         if core::fmt::write(&mut output, format_args!($($arg)*)).is_ok() {
 
             #[cfg(test)]
@@ -34,22 +34,27 @@ macro_rules! sprintln {
     ($stdout:expr, $fmt:expr)              => { sprint!($stdout, concat!($fmt, "\r\n") ) };
     ($stdout:expr, $fmt:expr, $($arg:tt)*) => { sprint!($stdout, concat!($fmt, "\r\n"), $($arg)*) };
 }
-
+/*
 #[macro_export]
 macro_rules! mitem {
     (Main,
      $ident_name:ident = $name:expr,
-     [$($children:tt)*]
+     [$( $child_name:expr => $children:tt, )*]
     ) => {
+        $(
+            mitem!($childname:expr; $children:tt)
+        )+
+
         static $ident_name: MenuItem<'_, Context> = MenuItem {
             name: $name,
             hint: None,
             parent: None,
-            menu_type: MenuItemType::SubMenu(&[$( $children )+ ]),
+            menu_type: MenuItemType::SubMenu(&[$( &$childname )+ ]),
         };
     };
-    (Read (&$parent:ident),
-     $ident_name:ident = $name:expr,
+    ($ident_name:ident => $parent:expr
+     Read (&$parent:ident),
+      = $name:expr,
      r=> $rfunc:expr
     ) => {
         static $ident_name: MenuItem<'_, Context> = MenuItem {
@@ -59,27 +64,5 @@ macro_rules! mitem {
             menu_type: MenuItemType::ReadValue($rfunc),
         };
     };
-    (Read (&$parent:ident),
-     $ident_name:ident = $name:expr, ($hint:expr)
-     r=> $rfunc:expr
-    ) => {
-        static $ident_name: MenuItem<'_, Context> = MenuItem {
-            name: $name,
-            hint: Some($hint),
-            parent: Some(&$parent),
-            menu_type: MenuItemType::ReadValue($rfunc),
-        };
-    };
-    (Write (&$parent:ident),
-     $ident_name:ident = $name:expr, ($hint:expr)
-     r=> $rfunc:expr,
-     w=> $wfunc:expr
-    ) => {
-        static $ident_name: MenuItem<'_, Context> = MenuItem {
-            name: $name,
-            hint: Some($hint),
-            parent: Some(&$parent),
-            menu_type: MenuItemType::WriteValue($rfunc, $wfunc),
-        };
-    };
 }
+*/
