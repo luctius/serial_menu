@@ -1,7 +1,7 @@
 [package]
 authors = ["Cor <prive@corpeters.nl>"]
 edition = "2018"
-name = "serial_menu"
+name = "serial-menu"
 version = "0.1.0"
 
 [dependencies]
