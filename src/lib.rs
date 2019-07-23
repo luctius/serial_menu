@@ -39,13 +39,15 @@ use arraydeque::{behavior::Wrapping, ArrayDeque};
 use embedded_hal::serial::{Read as HalRead, Write as HalWrite};
 use heapless::{
     consts::{
-        U32, U100
+        U32, U64, U100,
+        U50, U20
     },
     String
 };
 
 mod macros;
 
+const DEL: char = '\x7f';
 const BACKSPACE: char = '\x08';
 const NEWLINE: char = '\n';
 const CARRIAGE_RETURN: char = '\r';
@@ -95,34 +97,40 @@ pub struct MenuItem<'a, Context> {
     pub menu_type: MenuItemType<'a, Context>,
 }
 impl<'a, Context> MenuItem<'a, Context> {
-    fn value_to_string(&self, ctx: &Context) -> String<U32> {
-        let mut string = String::new();
+    fn value_to_string<S, E>(&self, ctx: &mut Context, tx: &mut S) -> Result<(), nb::Error<E> >
+    where
+        S: HalWrite<Word, Error = E>
+    {
+        let mut string = String::<U32>::new();
         match self.menu_type {
             MenuItemType::SubMenu(..) => (),
             MenuItemType::ReadValue(ref rcb) | MenuItemType::ExecValue(ref rcb, ..) | MenuItemType::WriteValue(ref rcb, ..) => {
                 rcb(&mut string, ctx);
+                sprint!(tx, ": {}", string)?;
             }
         }
 
-        string
+        Ok( () )
     }
 
-    fn menu_item_to_string(&self, idx: usize, ctx: &mut Context) -> String<U100>
+    fn menu_item_to_string<S, E>(&self, idx: usize, ctx: &mut Context, tx: &mut S) -> Result<(), nb::Error<E> >
+    where
+        S: HalWrite<Word, Error = E>
     {
-        let mut string = String::new();
-
         match self.menu_type {
-            MenuItemType::SubMenu(..)    => { let _ = write!(string, " [{}] --> {}",     idx, self.name); },
-            MenuItemType::ReadValue(..)  => { let _ = write!(string, " [{}] r=> {}: {}", idx, self.name, self.value_to_string(ctx) ); },
-            MenuItemType::WriteValue(..) => { let _ = write!(string, " [{}] w=> {}: {}", idx, self.name, self.value_to_string(ctx) ); },
-            MenuItemType::ExecValue(..)  => { let _ = write!(string, " [{}] e=> {}: {}", idx, self.name, self.value_to_string(ctx) ); },
+            MenuItemType::SubMenu(..)    => { sprint!(tx, " [{}] --> {}", idx, self.name)?; },
+            MenuItemType::ReadValue(..)  => { sprint!(tx, " [{}] r=> {}", idx, self.name)?; self.value_to_string(ctx, tx)?; },
+            MenuItemType::WriteValue(..) => { sprint!(tx, " [{}] w=> {}", idx, self.name)?; self.value_to_string(ctx, tx)?; },
+            MenuItemType::ExecValue(..)  => { sprint!(tx, " [{}] e=> {}", idx, self.name)?; self.value_to_string(ctx, tx)?; },
         }
 
         if let Some(hint) = self.hint {
-            let _ = write!(string, " [{}]", hint);
+            sprint!(tx, " [{}]", hint)?;
         }
 
-        string
+        sprintln!(tx)?;
+
+        Ok( () )
     }
 }
 
@@ -159,6 +167,11 @@ impl<'a, Context> Dispatcher<'a, Context> {
         self
     }
 
+    pub const fn without_init(mut self) -> Self {
+        self.state = MenuState::NeedIdx;
+        self
+    }
+
     fn get_input<S, E>(&mut self, serial: &mut S) -> Result<(), nb::Error<E> >
     where
         S: HalRead<Word, Error = E> + HalWrite<Word, Error = E>
@@ -176,7 +189,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
                         if c.is_ascii_hexdigit() {
                             let _ = self.buffer.push_back(c);
                             self.state = MenuState::Processing;
-                        } else if c == BACKSPACE {
+                        } else if c == BACKSPACE || c == DEL {
                             let _ = self.buffer.push_back('0');
                             self.state = MenuState::Processing;
                         } else if c == NEWLINE {
@@ -190,16 +203,23 @@ impl<'a, Context> Dispatcher<'a, Context> {
                         }
                     }
                     MenuState::NeedEnter => {
-                        if c == BACKSPACE {
-                            let _ = self.buffer.pop_back();
-                            sprint!(serial, "{bs} {bs}", bs=BACKSPACE)?;
+                        if c == BACKSPACE || c == DEL {
+                            if self.buffer.pop_back().is_some() {
+                                serial.write(BACKSPACE as u8)?;
+                                serial.write(b' ')?;
+                                serial.write(BACKSPACE as u8)?;
+                                serial.flush()?;
+                            }
                         } else if c == NEWLINE || c == CARRIAGE_RETURN {
                             sprintln!(serial)?;
-                            sprintln!(serial)?;
-                            self.state = MenuState::Processing;
+                            if !self.buffer.is_empty() {
+                                self.state = MenuState::Processing;
+                            }
                         } else {
                             let _ = self.buffer.push_back(c);
-                            sprint!(serial, "{}", c)?;
+                            serial.write(c as u8)?;
+                            serial.flush()?;
+                            serial.flush()?;
                         }
                     }
                     MenuState::Processing => {}
@@ -216,6 +236,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
     where
         S: HalWrite<Word, Error = E>
     {
+        sprintln!(tx)?;
         sprintln!(tx, "{}", self.current_item.name)?;
 
         if let MenuItemType::SubMenu(children) = self.current_item.menu_type {
@@ -223,11 +244,9 @@ impl<'a, Context> Dispatcher<'a, Context> {
                 sprintln!(tx, " <0> --> {}", parent.name)?;
             }
 
-            for (i, c) in children.iter().enumerate() {
-                sprintln!(tx, "{}", c.menu_item_to_string(i+1, ctx) )?;
+            for (i,c) in children.iter().enumerate() {
+                c.menu_item_to_string(i+1, ctx, tx)?;
             }
-
-            sprintln!(tx)?;
         }
 
         Ok(())
@@ -237,12 +256,12 @@ impl<'a, Context> Dispatcher<'a, Context> {
     where
         S: HalRead<Word, Error = E> + HalWrite<Word, Error = E>
     {
-        let mut result = Ok(());
-
         if self.state == MenuState::Init {
             self.display_menu(ctx, serial)?;
             self.state = MenuState::NeedIdx;
         }
+
+        let mut result = Ok(());
 
         while result.is_ok() {
             let mut changed = false;

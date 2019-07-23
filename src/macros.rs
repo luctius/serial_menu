@@ -5,7 +5,7 @@
 #[macro_export]
 macro_rules! sprint {
     ($stdout:expr, $($arg:tt)*) => ({
-        let mut output: String<U100> = String::new();
+        let mut output: String<U50> = String::new();
         if core::fmt::write(&mut output, format_args!($($arg)*)).is_ok() {
 
             #[cfg(test)]
