@@ -39,8 +39,7 @@ use arraydeque::{behavior::Wrapping, ArrayDeque};
 use embedded_hal::serial::{Read as HalRead, Write as HalWrite};
 use heapless::{
     consts::{
-        U32, U64, U100,
-        U50, U20
+        U32, U64,
     },
     String
 };
@@ -316,11 +315,10 @@ impl<'a, Context> Dispatcher<'a, Context> {
                                     Some(h) => sprintln!(serial, "Enter new value: [{}]", h),
                                 }
                             }
-                            MenuItemType::ExecValue(readcb, execcb) => {
+                            MenuItemType::ExecValue(_, execcb) => {
                                 execcb(ctx);
-                                let mut buffer = String::<U32>::new();
-                                readcb(&mut buffer, ctx);
-                                sprintln!(serial, "{}: {}", child.name, buffer)
+                                changed = true;
+                                Ok( () )
                             }
                         }
                     } else {
