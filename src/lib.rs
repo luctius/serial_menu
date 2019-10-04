@@ -122,9 +122,9 @@ impl<'a, Context> MenuItem<'a, Context> {
                 sprint!(tx, " [{}] --> {}", idx, self.name)?;
                 if !is_active(ctx) { sprint!(tx, " (Disabled)")?; }
             },
-            MenuItemType::ReadValue(..)  => { sprint!(tx, " [{}] r=> {}", idx, self.name)?; self.value_to_string(ctx, tx)?; },
-            MenuItemType::WriteValue(..) => { sprint!(tx, " [{}] w=> {}", idx, self.name)?; self.value_to_string(ctx, tx)?; },
-            MenuItemType::ExecValue(..)  => { sprint!(tx, " [{}] e=> {}", idx, self.name)?; self.value_to_string(ctx, tx)?; },
+            MenuItemType::ReadValue(..)  => { sprint!(tx, " [{:X}] r=> {}", idx, self.name)?; self.value_to_string(ctx, tx)?; },
+            MenuItemType::WriteValue(..) => { sprint!(tx, " [{:X}] w=> {}", idx, self.name)?; self.value_to_string(ctx, tx)?; },
+            MenuItemType::ExecValue(..)  => { sprint!(tx, " [{:X}] e=> {}", idx, self.name)?; self.value_to_string(ctx, tx)?; },
         }
 
         if let Some(hint) = self.hint {
