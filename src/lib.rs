@@ -195,8 +195,9 @@ impl<'a, Context> Dispatcher<'a, Context> {
                         } else if c == BACKSPACE || c == DEL {
                             let _ = self.buffer.push_back('0');
                             self.state = MenuState::Processing;
-                        } else if c == NEWLINE {
-                            continue;
+                        } else if c == NEWLINE || c == CARRIAGE_RETURN {
+                            let _ = self.buffer.push_back(NEWLINE);
+                            return Ok(());
                         } else {
                             if c == 'x' {
                                 #[cfg(test)]
@@ -276,6 +277,10 @@ impl<'a, Context> Dispatcher<'a, Context> {
             if let Some(input) = self.buffer.front() {
                 let current_idx = if let Some(digit) = input.to_digit(16) {
                     digit as usize
+                } else if *input == NEWLINE {
+                    let _ = self.buffer.pop_front();
+                    self.display_menu(ctx, serial)?;
+                    continue;
                 } else {
                     let _ = self.buffer.pop_front();
                     continue;
@@ -326,9 +331,12 @@ impl<'a, Context> Dispatcher<'a, Context> {
                                     Some(h) => sprintln!(serial, "Enter new value: [{}]", h),
                                 }
                             }
-                            MenuItemType::ExecValue(_, execcb) => {
+                            MenuItemType::ExecValue(readcb, execcb) => {
                                 execcb(ctx);
-                                changed = true;
+                                let mut string = String::<U32>::new();
+                                readcb(&mut string, ctx);
+                                sprintln!(serial, "> {}", string)?;
+                                //changed = true;
                                 Ok( () )
                             }
                         }
