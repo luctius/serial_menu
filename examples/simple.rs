@@ -14,7 +14,7 @@ static MAIN_MENU: MenuItem<'_, Context> = MenuItem {
     name: "Main",
     hint: None,
     parent: None,
-    menu_type: MenuItemType::SubMenu(&[&SUB1, &SUB2])
+    menu_type: MenuItemType::SubMenu(&[&SUB1, &SUB2, &SUB3], |_| true)
 };
 
 static BOOL_VAL: MenuItem<'_, Context> = MenuItem {
@@ -60,15 +60,30 @@ static SUB1: MenuItem<'_, Context> = MenuItem {
     name: "Sub Menu 1",
     hint: None,
     parent: Some(&MAIN_MENU),
-    menu_type: MenuItemType::SubMenu(&[&BOOL_VAL, &PWM_TEST])
+    menu_type: MenuItemType::SubMenu(&[&BOOL_VAL, &PWM_TEST], |_| true)
 };
 
 static SUB2: MenuItem<'_, Context> = MenuItem {
     name: "Sub Menu 2",
     hint: None,
     parent: Some(&MAIN_MENU),
-    menu_type: MenuItemType::SubMenu(&[&UINT_VAL, &UINT_VAL_WRITE])
+    menu_type: MenuItemType::SubMenu(&[&UINT_VAL, &UINT_VAL_WRITE], |_| true)
 };
+
+static SUB3: MenuItem<'_, Context> = MenuItem {
+    name: "Sub Menu 3",
+    hint: None,
+    parent: Some(&MAIN_MENU),
+    menu_type: MenuItemType::SubMenu(&[&UINT_VAL2], |_| false)
+};
+
+static UINT_VAL2: MenuItem<'_, Context> = MenuItem {
+    name: "Uint",
+    hint: None,
+    parent: None,
+    menu_type: MenuItemType::ReadValue(|buf, ctx| { let _ = write!(buf, "{}", ctx.uint_value); } ),
+};
+
 
 struct SerialMock {
     window: pancurses::Window,
