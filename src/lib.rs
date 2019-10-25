@@ -245,7 +245,7 @@ impl<'a, Context> Dispatcher<'a, Context> {
 
         if let MenuItemType::SubMenu(children, is_active) = self.current_item.menu_type {
             if let Some(parent) = self.current_item.parent {
-                sprintln!(tx, " <0> --> {}", parent.name)?;
+                sprintln!(tx, " <0> <-- Back to {}", parent.name)?;
             }
 
             if is_active(ctx) {
